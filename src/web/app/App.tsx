@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { NavigationPage } from '../pages/NavigationPage';
 import { OverviewPage } from '../pages/OverviewPage';
 import { PagesPage } from '../pages/PagesPage';
 import { ProjectListPage } from '../pages/ProjectListPage';
@@ -14,6 +15,7 @@ export function App() {
         <Route path="overview" element={<OverviewPage />} />
         <Route path="tables" element={<TablesPage />} />
         <Route path="pages" element={<PagesPage />} />
+        <Route path="navigation" element={<NavigationPage />} />
       </Route>
     </Routes>
   );
