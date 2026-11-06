@@ -8,11 +8,17 @@ interface FileInfo {
   updatedAt: string;
 }
 
+function joinDir(directory: string, filename: string): string {
+  const trimmed = directory.trim().replace(/^\/+|\/+$/g, '');
+  return trimmed ? `${trimmed}/${filename}` : filename;
+}
+
 export function FilesPage() {
   const project = useProjectStore((store) => store.project);
   const spec = useProjectStore((store) => store.spec);
   const update = useProjectStore((store) => store.update);
   const [files, setFiles] = useState<FileInfo[]>([]);
+  const [directory, setDirectory] = useState('api/web_root/');
   const [error, setError] = useState('');
 
   const refresh = useCallback(async () => {
@@ -32,8 +38,9 @@ export function FilesPage() {
     setError('');
     try {
       for (const file of Array.from(list)) {
-        const path = (file as File & { webkitRelativePath?: string })
-          .webkitRelativePath || file.name;
+        const relative = (file as File & { webkitRelativePath?: string })
+          .webkitRelativePath;
+        const path = joinDir(directory, relative || file.name);
         await api.uploadFile(project.key, file, path);
         const current = useProjectStore.getState().spec;
         if (current && !current.rawFiles.some((raw) => raw.path === path)) {
@@ -59,8 +66,13 @@ export function FilesPage() {
     }
     try {
       await api.deleteFile(project.key, path);
-      const nextRaw = spec.rawFiles.filter((raw) => raw.path !== path);
-      if (nextRaw.length !== spec.rawFiles.length) update('rawFiles', nextRaw);
+      const latest = useProjectStore.getState().spec;
+      if (latest) {
+        const nextRaw = latest.rawFiles.filter((raw) => raw.path !== path);
+        if (nextRaw.length !== latest.rawFiles.length) {
+          update('rawFiles', nextRaw);
+        }
+      }
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '删除失败');
@@ -74,11 +86,25 @@ export function FilesPage() {
         上传后会加入 spec.rawFiles 并参与生成。删除会同步移除引用；raw 页面引用的文件请谨慎删除。
       </p>
       {error ? <p className="error-text">{error}</p> : null}
+      <label className="field">
+        <span>上传到目录</span>
+        <input
+          aria-label="上传到目录"
+          value={directory}
+          placeholder="api/web_root/"
+          onChange={(event) => setDirectory(event.target.value)}
+        />
+      </label>
       <input
         aria-label="上传文件"
         type="file"
         multiple
-        onChange={(event) => void upload(event.target.files)}
+        onChange={(event) => {
+          const input = event.currentTarget;
+          void upload(input.files).finally(() => {
+            input.value = '';
+          });
+        }}
       />
       <table className="grid">
         <thead>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type GenerateResult } from '../api';
 import { IssueList } from '../components/IssueList';
 import { useProjectStore } from '../store/projectStore';
@@ -12,6 +12,11 @@ export function BuildPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (!project) return;
+    void validateNow();
+  }, [project, validateNow]);
+
   if (!project) return null;
   const hasErrors = issues.some((issue) => issue.severity === 'error');
 
@@ -20,6 +25,11 @@ export function BuildPage() {
     setError('');
     try {
       await validateNow();
+      const current = useProjectStore.getState().issues;
+      if (current.some((issue) => issue.severity === 'error')) {
+        setError('生成失败：请先修复校验错误。');
+        return;
+      }
       const generated = await generate();
       setResult(generated);
       if (!generated) {

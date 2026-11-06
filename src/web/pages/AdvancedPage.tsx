@@ -40,9 +40,13 @@ export function AdvancedPage() {
       <button
         type="button"
         onClick={() => {
-          const formatted = JSON.stringify(JSON.parse(text), null, 2);
-          setText(formatted);
-          setError('');
+          try {
+            const formatted = JSON.stringify(JSON.parse(text), null, 2);
+            setText(formatted);
+            setError('');
+          } catch (cause) {
+            setError(`JSON 无效：${cause instanceof Error ? cause.message : ''}`);
+          }
         }}
       >
         格式化
