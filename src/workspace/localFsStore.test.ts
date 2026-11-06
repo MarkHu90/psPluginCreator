@@ -120,3 +120,56 @@ describe('spec writes', () => {
     ).rejects.toBeInstanceOf(WorkspaceError);
   });
 });
+
+describe('raw files', () => {
+  it('writes, lists, reads and deletes files', async () => {
+    const project = await store.create('local', { name: 'Demo' });
+    const ref = { tenant: 'local', key: project.key };
+
+    await store.writeFile(ref, 'api/web_root/scripts/a.js', new Uint8Array([1, 2, 3]));
+    await store.writeFile(ref, 'api/web_root/images/logo.png', new Uint8Array([4]));
+
+    const files = await store.listFiles(ref);
+    expect(files.map((file) => file.path)).toEqual([
+      'api/web_root/images/logo.png',
+      'api/web_root/scripts/a.js',
+    ]);
+    expect(files[1].size).toBe(3);
+    expect(Array.from(await store.readFile(ref, 'api/web_root/scripts/a.js'))).toEqual([1, 2, 3]);
+
+    await store.deleteFile(ref, 'api/web_root/scripts/a.js');
+    expect((await store.listFiles(ref)).map((file) => file.path)).toEqual([
+      'api/web_root/images/logo.png',
+    ]);
+  });
+
+  it('rejects unsafe paths and reserved prefixes', async () => {
+    const project = await store.create('local', { name: 'Demo' });
+    const ref = { tenant: 'local', key: project.key };
+    await expect(store.writeFile(ref, '../evil', new Uint8Array())).rejects.toMatchObject({
+      code: 'PATH_UNSAFE',
+    });
+    await expect(store.writeFile(ref, 'build/x', new Uint8Array())).rejects.toMatchObject({
+      code: 'PATH_UNSAFE',
+    });
+  });
+});
+
+describe('navigation baseline', () => {
+  it('returns null before the first build and round-trips entries', async () => {
+    const project = await store.create('local', { name: 'Demo' });
+    const ref = { tenant: 'local', key: project.key };
+    expect(await store.readNavBaseline(ref)).toBeNull();
+
+    const entries = [
+      {
+        htmlID: 'demo',
+        title: { en: 'Demo' },
+        sortOrder: 1,
+        version: '1.0.0',
+      },
+    ];
+    await store.writeNavBaseline(ref, entries);
+    expect(await store.readNavBaseline(ref)).toEqual(entries);
+  });
+});

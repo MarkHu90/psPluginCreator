@@ -5,10 +5,15 @@ import {
   readdir,
   rename,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { createDefaultSpec, type PluginSpec } from '../core/index';
+import {
+  createDefaultSpec,
+  type NavEntrySpec,
+  type PluginSpec,
+} from '../core/index';
 import { WorkspaceError } from './errors';
 import { assertValidKey, safePath, slugifyKey } from './safePath';
 import type {
@@ -16,6 +21,8 @@ import type {
   Project,
   ProjectRef,
   ProjectSummary,
+  RawFileInfo,
+  WorkspaceStore,
 } from './types';
 
 async function writeAtomic(
@@ -31,7 +38,7 @@ async function writeAtomic(
   await rename(temp, target);
 }
 
-export class LocalFsWorkspaceStore {
+export class LocalFsWorkspaceStore implements WorkspaceStore {
   private readonly locks = new Map<string, Promise<void>>();
 
   constructor(private readonly root: string) {}
@@ -263,6 +270,117 @@ export class LocalFsWorkspaceStore {
       );
       return { revision: next.revision, updatedAt: now };
     });
+  }
+
+  private filesDir(ref: ProjectRef): string {
+    return join(this.projectDir(ref), 'files');
+  }
+
+  private assertRawPath(path: string): void {
+    if (
+      path === 'build' ||
+      path.startsWith('build/') ||
+      path === 'state' ||
+      path.startsWith('state/') ||
+      path === 'plugin.json' ||
+      path === 'project.json'
+    ) {
+      throw new WorkspaceError('PATH_UNSAFE', `Reserved raw path: ${path}`);
+    }
+  }
+
+  async listFiles(ref: ProjectRef): Promise<RawFileInfo[]> {
+    await this.get(ref);
+    const out: RawFileInfo[] = [];
+    const walk = async (dir: string, prefix: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      for (const entry of entries) {
+        if (entry.isSymbolicLink()) continue;
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          await walk(join(dir, entry.name), rel);
+        } else if (entry.isFile()) {
+          const info = await stat(join(dir, entry.name));
+          out.push({
+            path: rel,
+            size: info.size,
+            updatedAt: info.mtime.toISOString(),
+          });
+        }
+      }
+    };
+    await walk(this.filesDir(ref), '');
+    out.sort((a, b) => a.path.localeCompare(b.path));
+    return out;
+  }
+
+  async readFile(ref: ProjectRef, path: string): Promise<Uint8Array> {
+    await this.get(ref);
+    this.assertRawPath(path);
+    const target = await safePath(this.filesDir(ref), path);
+    try {
+      return new Uint8Array(await readFile(target));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new WorkspaceError('NOT_FOUND', `File not found: ${path}`);
+      }
+      throw error;
+    }
+  }
+
+  async writeFile(
+    ref: ProjectRef,
+    path: string,
+    bytes: Uint8Array,
+  ): Promise<void> {
+    await this.get(ref);
+    this.assertRawPath(path);
+    await mkdir(this.filesDir(ref), { recursive: true });
+    const target = await safePath(this.filesDir(ref), path);
+    await writeAtomic(target, bytes);
+  }
+
+  async deleteFile(ref: ProjectRef, path: string): Promise<void> {
+    await this.get(ref);
+    this.assertRawPath(path);
+    const target = await safePath(this.filesDir(ref), path);
+    try {
+      await rm(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new WorkspaceError('NOT_FOUND', `File not found: ${path}`);
+      }
+      throw error;
+    }
+  }
+
+  async readNavBaseline(ref: ProjectRef): Promise<NavEntrySpec[] | null> {
+    const target = join(this.projectDir(ref), 'state', 'nav-baseline.json');
+    try {
+      const parsed = JSON.parse(
+        await readFile(target, 'utf8'),
+      ) as { entries?: NavEntrySpec[] };
+      return Array.isArray(parsed.entries) ? parsed.entries : null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
+  async writeNavBaseline(
+    ref: ProjectRef,
+    nav: NavEntrySpec[],
+  ): Promise<void> {
+    await writeAtomic(
+      join(this.projectDir(ref), 'state', 'nav-baseline.json'),
+      `${JSON.stringify({ generatedAt: new Date().toISOString(), entries: nav }, null, 2)}\n`,
+    );
   }
 
   buildDir(ref: ProjectRef): string {
