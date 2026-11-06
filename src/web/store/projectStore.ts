@@ -39,11 +39,11 @@ interface ProjectStore {
   overwrite(): Promise<void>;
   validateNow(): Promise<void>;
   generate(): Promise<GenerateResult | null>;
-  clearConflict(): void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let validateTimer: ReturnType<typeof setTimeout> | undefined;
+let saving = false;
 
 function setIn<T>(value: T, path: string, next: unknown): T {
   const parts = path.split('.');
@@ -103,11 +103,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         revision: result.project.revision,
         issues: [],
         saveState: 'idle',
+        conflict: null,
         loading: false,
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
-        set({ loading: false, notFound: true, project: null, spec: null });
+        set({
+          loading: false,
+          notFound: true,
+          project: null,
+          spec: null,
+          conflict: null,
+          saveState: 'idle',
+        });
         return;
       }
       set({
@@ -120,22 +128,47 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   update(path, value) {
     const spec = get().spec;
     if (!spec) return;
-    set({ spec: setIn(spec, path, value), saveState: 'dirty' });
+    const next = setIn(spec, path, value);
+    if (get().conflict) {
+      // Keep local edits while the conflict dialog is open so overwrite uses
+      // the latest spec, but do not autosave with a stale revision.
+      set({ spec: next });
+      return;
+    }
+    set({ spec: next, saveState: 'dirty' });
     scheduleSave(get);
   },
 
   replaceSpec(spec) {
+    if (get().conflict) {
+      set({ spec });
+      return;
+    }
     set({ spec, saveState: 'dirty' });
     scheduleSave(get);
   },
 
   async saveNow() {
-    const { project, spec, revision, saveState } = get();
-    if (!project || !spec || saveState === 'saving') return;
+    const { project, spec, revision, saveState, conflict } = get();
+    if (!project || !spec || saving) return;
+    if (conflict || saveState === 'conflict') return;
     if (saveTimer) clearTimeout(saveTimer);
+    saving = true;
     set({ saveState: 'saving' });
     try {
       const result = await api.putSpec(project.key, spec, revision);
+      if (get().spec !== spec) {
+        // A newer edit landed while this request was in flight. Keep it dirty
+        // and send it rather than reporting a stale save as complete.
+        set({
+          revision: result.revision,
+          saveState: 'dirty',
+          conflict: null,
+          error: '',
+        });
+        scheduleSave(get);
+        return;
+      }
       set({
         revision: result.revision,
         saveState: 'saved',
@@ -156,6 +189,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         saveState: 'error',
         error: error instanceof Error ? error.message : '保存失败',
       });
+    } finally {
+      saving = false;
     }
   },
 
@@ -167,10 +202,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   async overwrite() {
     const { project, spec, conflict } = get();
-    if (!project || !spec || !conflict) return;
+    if (!project || !spec || !conflict || saving) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saving = true;
     set({ saveState: 'saving', conflict: null });
     try {
       const result = await api.putSpec(project.key, spec, conflict.revision);
+      if (get().spec !== spec) {
+        set({
+          revision: result.revision,
+          saveState: 'dirty',
+          error: '',
+        });
+        scheduleSave(get);
+        return;
+      }
       set({ revision: result.revision, saveState: 'saved', error: '' });
       scheduleValidate(get);
     } catch (error) {
@@ -186,6 +232,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         saveState: 'error',
         error: error instanceof Error ? error.message : '保存失败',
       });
+    } finally {
+      saving = false;
     }
   },
 
@@ -218,9 +266,5 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       set({ error: error instanceof Error ? error.message : '生成失败' });
       return null;
     }
-  },
-
-  clearConflict() {
-    set({ conflict: null, saveState: 'dirty' });
   },
 }));

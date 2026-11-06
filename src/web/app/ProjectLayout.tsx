@@ -24,6 +24,7 @@ export function ProjectLayout() {
   const validateNow = useProjectStore((store) => store.validateNow);
   const saveNow = useProjectStore((store) => store.saveNow);
   const saveState = useProjectStore((store) => store.saveState);
+  const conflict = useProjectStore((store) => store.conflict);
 
   useEffect(() => {
     if (key) void load(key);
@@ -42,14 +43,14 @@ export function ProjectLayout() {
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (saveState === 'dirty' || saveState === 'saving') {
+      if (saveState === 'dirty' || saveState === 'saving' || conflict) {
         event.preventDefault();
         event.returnValue = '';
       }
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [saveState]);
+  }, [saveState, conflict]);
 
   if (loading) return <main className="app">加载中…</main>;
   if (notFound || !project) {
