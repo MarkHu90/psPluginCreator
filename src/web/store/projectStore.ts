@@ -1,0 +1,226 @@
+import { create } from 'zustand';
+import type { NavEntrySpec, PluginSpec, ValidationIssue } from '../../core/index';
+import {
+  ApiError,
+  api,
+  type GenerateResult,
+  type Project,
+} from '../api';
+
+export type SaveState =
+  | 'idle'
+  | 'dirty'
+  | 'saving'
+  | 'saved'
+  | 'conflict'
+  | 'error';
+
+interface ConflictState {
+  revision: number;
+}
+
+interface ProjectStore {
+  project: Project | null;
+  spec: PluginSpec | null;
+  navBaseline: NavEntrySpec[] | null;
+  revision: number;
+  issues: ValidationIssue[];
+  saveState: SaveState;
+  error: string;
+  conflict: ConflictState | null;
+  loading: boolean;
+  notFound: boolean;
+
+  load(key: string): Promise<void>;
+  update(path: string, value: unknown): void;
+  replaceSpec(spec: PluginSpec): void;
+  saveNow(): Promise<void>;
+  reload(): Promise<void>;
+  overwrite(): Promise<void>;
+  validateNow(): Promise<void>;
+  generate(): Promise<GenerateResult | null>;
+  clearConflict(): void;
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let validateTimer: ReturnType<typeof setTimeout> | undefined;
+
+function setIn<T>(value: T, path: string, next: unknown): T {
+  const parts = path.split('.');
+  const clone = (Array.isArray(value) ? [...value] : { ...value }) as Record<
+    string,
+    unknown
+  >;
+  let cursor: Record<string, unknown> = clone;
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    const key = parts[index];
+    const current = cursor[key];
+    cursor[key] = Array.isArray(current)
+      ? [...current]
+      : { ...((current as object) ?? {}) };
+    cursor = cursor[key] as Record<string, unknown>;
+  }
+  cursor[parts[parts.length - 1]] = next;
+  return clone as unknown as T;
+}
+
+function scheduleSave(get: () => ProjectStore): void {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    void get().saveNow();
+  }, 800);
+}
+
+function scheduleValidate(get: () => ProjectStore): void {
+  if (validateTimer) clearTimeout(validateTimer);
+  validateTimer = setTimeout(() => {
+    void get().validateNow();
+  }, 1200);
+}
+
+export const useProjectStore = create<ProjectStore>((set, get) => ({
+  project: null,
+  spec: null,
+  navBaseline: null,
+  revision: 0,
+  issues: [],
+  saveState: 'idle',
+  error: '',
+  conflict: null,
+  loading: false,
+  notFound: false,
+
+  async load(key) {
+    if (saveTimer) clearTimeout(saveTimer);
+    if (validateTimer) clearTimeout(validateTimer);
+    set({ loading: true, notFound: false, error: '' });
+    try {
+      const result = await api.getProject(key);
+      set({
+        project: result.project,
+        spec: result.spec,
+        navBaseline: result.navBaseline,
+        revision: result.project.revision,
+        issues: [],
+        saveState: 'idle',
+        loading: false,
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        set({ loading: false, notFound: true, project: null, spec: null });
+        return;
+      }
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : '加载失败',
+      });
+    }
+  },
+
+  update(path, value) {
+    const spec = get().spec;
+    if (!spec) return;
+    set({ spec: setIn(spec, path, value), saveState: 'dirty' });
+    scheduleSave(get);
+  },
+
+  replaceSpec(spec) {
+    set({ spec, saveState: 'dirty' });
+    scheduleSave(get);
+  },
+
+  async saveNow() {
+    const { project, spec, revision, saveState } = get();
+    if (!project || !spec || saveState === 'saving') return;
+    if (saveTimer) clearTimeout(saveTimer);
+    set({ saveState: 'saving' });
+    try {
+      const result = await api.putSpec(project.key, spec, revision);
+      set({
+        revision: result.revision,
+        saveState: 'saved',
+        conflict: null,
+        error: '',
+      });
+      scheduleValidate(get);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const detail = error.details[0] as { revision?: number } | undefined;
+        set({
+          saveState: 'conflict',
+          conflict: { revision: detail?.revision ?? 0 },
+        });
+        return;
+      }
+      set({
+        saveState: 'error',
+        error: error instanceof Error ? error.message : '保存失败',
+      });
+    }
+  },
+
+  async reload() {
+    const project = get().project;
+    if (!project) return;
+    await get().load(project.key);
+  },
+
+  async overwrite() {
+    const { project, spec, conflict } = get();
+    if (!project || !spec || !conflict) return;
+    set({ saveState: 'saving', conflict: null });
+    try {
+      const result = await api.putSpec(project.key, spec, conflict.revision);
+      set({ revision: result.revision, saveState: 'saved', error: '' });
+      scheduleValidate(get);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const detail = error.details[0] as { revision?: number } | undefined;
+        set({
+          saveState: 'conflict',
+          conflict: { revision: detail?.revision ?? 0 },
+        });
+        return;
+      }
+      set({
+        saveState: 'error',
+        error: error instanceof Error ? error.message : '保存失败',
+      });
+    }
+  },
+
+  async validateNow() {
+    const project = get().project;
+    if (!project) return;
+    try {
+      const result = await api.validate(project.key);
+      set({ issues: result.issues });
+    } catch {
+      // Keep the previous issues; the save state already surfaces request errors.
+    }
+  },
+
+  async generate() {
+    const project = get().project;
+    if (!project) return null;
+    try {
+      const result = await api.generate(project.key);
+      set({
+        issues: result.warnings,
+        navBaseline: result.navBaseline,
+      });
+      return result;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 422) {
+        set({ issues: error.details as ValidationIssue[] });
+        return null;
+      }
+      set({ error: error instanceof Error ? error.message : '生成失败' });
+      return null;
+    }
+  },
+
+  clearConflict() {
+    set({ conflict: null, saveState: 'dirty' });
+  },
+}));
