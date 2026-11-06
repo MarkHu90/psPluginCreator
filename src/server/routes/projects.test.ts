@@ -199,6 +199,34 @@ describe('generate and download', () => {
     expect(Object.keys(entries)).toContain('plugin.xml');
   });
 
+  it('generates from a spec whose arrays are omitted', async () => {
+    const created = await createProject();
+    const full = createDefaultSpec({ key: 'demo', name: 'Demo Plugin' });
+    await app.inject({
+      method: 'PUT',
+      url: '/api/projects/demo/spec',
+      payload: {
+        spec: {
+          schemaVersion: 1,
+          key: 'demo',
+          plugin: {
+            ...full.plugin,
+            publisher: { name: 'P', email: 'p@example.com' },
+          },
+        },
+        revision: created.project.revision,
+      },
+    });
+
+    const generated = await app.inject({
+      method: 'POST',
+      url: '/api/projects/demo/generate',
+      payload: {},
+    });
+    expect(generated.statusCode).toBe(200);
+    expect(generated.json().files).toContain('api/plugin.xml');
+  });
+
   it('returns BUILD_MISSING before the first build', async () => {
     await createProject();
     const response = await app.inject({

@@ -6,6 +6,7 @@ import {
   buildZip,
   flattenNavigation,
   generatePlan,
+  specSchema,
   validateOutput,
   validateSpec,
   type PluginSpec,
@@ -192,7 +193,7 @@ export function registerProjectRoutes(
         });
       }
 
-      const spec = rawSpec as PluginSpec;
+      const spec = specSchema.parse(rawSpec) as unknown as PluginSpec;
       const rawFiles = new Map<string, Uint8Array>();
       const missing: ValidationIssue[] = [];
       for (const raw of spec.rawFiles) {
