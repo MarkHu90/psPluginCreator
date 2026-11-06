@@ -74,9 +74,13 @@ export function registerProjectRoutes(
     key,
   });
 
-  app.get('/api/projects', async (request) => {
-    const tenant = deps.actor(request).tenant;
-    return { projects: await deps.store.list(tenant) };
+  app.get('/api/projects', async (request, reply) => {
+    try {
+      const tenant = deps.actor(request).tenant;
+      return { projects: await deps.store.list(tenant) };
+    } catch (error) {
+      return sendWorkspaceError(reply, error);
+    }
   });
 
   app.post('/api/projects', async (request, reply) => {
@@ -182,7 +186,10 @@ export function registerProjectRoutes(
 
     try {
       const { spec: rawSpec } = await deps.store.readSpec(ref);
-      const specIssues = validateSpec(rawSpec);
+      const navBaseline = await deps.store.readNavBaseline(ref);
+      const specIssues = validateSpec(rawSpec, {
+        previousNavigation: (navBaseline ?? undefined) as never,
+      });
       if (specIssues.some((issue) => issue.severity === 'error')) {
         return reply.code(422).send({
           error: {
@@ -239,14 +246,14 @@ export function registerProjectRoutes(
       }
 
       await writeBuildAtomically(deps.store.buildDir(ref), files, zips);
-      const navBaseline = flattenNavigation(spec.navigation);
-      await deps.store.writeNavBaseline(ref, navBaseline);
+      const nextNavBaseline = flattenNavigation(spec.navigation);
+      await deps.store.writeNavBaseline(ref, nextNavBaseline);
 
       return {
         files: files.map((file) => file.path),
         artifacts: { api: withZip, dbsetup: withZip, combined: withZip },
         warnings: issues.filter((issue) => issue.severity === 'warning'),
-        navBaseline,
+        navBaseline: nextNavBaseline,
       };
     } catch (error) {
       return sendWorkspaceError(reply, error);

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -105,6 +105,26 @@ describe('project routes', () => {
     expect(
       response.json().issues.map((issue: { code: string }) => issue.code),
     ).toContain('PAGE_STUDENT_CONTEXT_MUST_USE_GUARDIAN');
+  });
+
+  it('creates projects in the actor tenant workspace', async () => {
+    const otherApp = buildServer({
+      workspacesDir: dir,
+      actor: () => ({ tenant: 'other', role: 'owner' }),
+    });
+    try {
+      const response = await otherApp.inject({
+        method: 'POST',
+        url: '/api/projects',
+        payload: { key: 'demo', name: 'Demo Plugin' },
+      });
+      expect(response.statusCode).toBe(201);
+      await expect(
+        access(join(dir, 'other', 'demo', 'project.json')),
+      ).resolves.toBeUndefined();
+    } finally {
+      await otherApp.close();
+    }
   });
 
   it('deletes a project', async () => {
@@ -225,6 +245,101 @@ describe('generate and download', () => {
     });
     expect(generated.statusCode).toBe(200);
     expect(generated.json().files).toContain('api/plugin.xml');
+  });
+
+  it('rejects generation when a changed nav entry keeps its version', async () => {
+    const created = await createProject();
+    const spec = createDefaultSpec({
+      key: 'demo',
+      name: 'Demo Plugin',
+      publisher: { name: 'P', email: 'p@example.com' },
+    });
+    spec.navigation = [
+      {
+        filename: 'demo-nav.json',
+        contextType: 'main',
+        entries: [
+          {
+            htmlID: 'demo-link',
+            title: { en: 'Demo' },
+            sortOrder: 1,
+            pageURL: '/admin/demo.html',
+            version: '1.0.0',
+          },
+        ],
+      },
+    ];
+    const firstPut = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/demo/spec',
+      payload: { spec, revision: created.project.revision },
+    });
+    expect(firstPut.statusCode).toBe(200);
+
+    const firstGenerate = await app.inject({
+      method: 'POST',
+      url: '/api/projects/demo/generate',
+      payload: {},
+    });
+    expect(firstGenerate.statusCode).toBe(200);
+
+    const changed = {
+      ...spec,
+      navigation: [
+        {
+          ...spec.navigation[0],
+          entries: [
+            {
+              ...spec.navigation[0].entries[0],
+              title: { en: 'Changed' },
+            },
+          ],
+        },
+      ],
+    };
+    const secondPut = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/demo/spec',
+      payload: { spec: changed, revision: firstPut.json().revision },
+    });
+    expect(secondPut.statusCode).toBe(200);
+
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/api/projects/demo/generate',
+      payload: {},
+    });
+    expect(rejected.statusCode).toBe(422);
+    expect(
+      rejected
+        .json()
+        .error.details.map((issue: { code: string }) => issue.code),
+    ).toContain('NAV_VERSION_NOT_INCREMENTED');
+  });
+
+  it('rejects generation when a referenced raw file is missing', async () => {
+    const created = await createProject();
+    const spec = createDefaultSpec({
+      key: 'demo',
+      name: 'Demo Plugin',
+      publisher: { name: 'P', email: 'p@example.com' },
+    });
+    spec.rawFiles.push({ path: 'api/web_root/scripts/missing.js' });
+    await app.inject({
+      method: 'PUT',
+      url: '/api/projects/demo/spec',
+      payload: { spec, revision: created.project.revision },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/projects/demo/generate',
+      payload: {},
+    });
+    expect(response.statusCode).toBe(422);
+    expect(
+      response.json().error.details.map((issue: { code: string }) => issue.code),
+    ).toContain('RAW_FILE_MISSING');
   });
 
   it('returns BUILD_MISSING before the first build', async () => {

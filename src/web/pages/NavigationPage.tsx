@@ -159,7 +159,17 @@ function NavEntryList({
           <button
             type="button"
             aria-label="删除条目"
-            onClick={() => onChange(entries.filter((_, i) => i !== index))}
+            onClick={() => {
+              const name = entry.title?.en ?? entry.htmlID;
+              if (
+                !window.confirm(
+                  `确定删除导航条目 ${name}？其子条目也会一并删除，此操作不可撤销。`,
+                )
+              ) {
+                return;
+              }
+              onChange(entries.filter((_, i) => i !== index));
+            }}
           >
             ×
           </button>

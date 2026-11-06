@@ -35,6 +35,7 @@ interface ProjectStore {
   update(path: string, value: unknown): void;
   replaceSpec(spec: PluginSpec): void;
   saveNow(): Promise<void>;
+  flushSave(): Promise<boolean>;
   reload(): Promise<void>;
   overwrite(): Promise<void>;
   validateNow(): Promise<void>;
@@ -43,7 +44,8 @@ interface ProjectStore {
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let validateTimer: ReturnType<typeof setTimeout> | undefined;
-let saving = false;
+let inFlight: Promise<void> | null = null;
+let savedSpec: PluginSpec | null = null;
 
 function setIn<T>(value: T, path: string, next: unknown): T {
   const parts = path.split('.');
@@ -96,6 +98,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ loading: true, notFound: false, error: '' });
     try {
       const result = await api.getProject(key);
+      savedSpec = result.spec;
       set({
         project: result.project,
         spec: result.spec,
@@ -149,48 +152,76 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   async saveNow() {
-    const { project, spec, revision, saveState, conflict } = get();
-    if (!project || !spec || saving) return;
-    if (conflict || saveState === 'conflict') return;
     if (saveTimer) clearTimeout(saveTimer);
-    saving = true;
-    set({ saveState: 'saving' });
-    try {
-      const result = await api.putSpec(project.key, spec, revision);
-      if (get().spec !== spec) {
-        // A newer edit landed while this request was in flight. Keep it dirty
-        // and send it rather than reporting a stale save as complete.
+    const previous = inFlight;
+    const current = (async () => {
+      if (previous) await previous;
+      const { project, spec, revision, saveState, conflict } = get();
+      if (!project || !spec) return;
+      if (conflict || saveState === 'conflict') return;
+      if (saveState === 'saved' && spec === savedSpec) return;
+      set({ saveState: 'saving' });
+      try {
+        const result = await api.putSpec(project.key, spec, revision);
+        if (get().spec !== spec) {
+          // A newer edit landed while this request was in flight. Keep it dirty
+          // and send it rather than reporting a stale save as complete.
+          set({
+            revision: result.revision,
+            saveState: 'dirty',
+            conflict: null,
+            error: '',
+          });
+          scheduleSave(get);
+          return;
+        }
+        savedSpec = spec;
         set({
           revision: result.revision,
-          saveState: 'dirty',
+          saveState: 'saved',
           conflict: null,
           error: '',
         });
-        scheduleSave(get);
-        return;
-      }
-      set({
-        revision: result.revision,
-        saveState: 'saved',
-        conflict: null,
-        error: '',
-      });
-      scheduleValidate(get);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        const detail = error.details[0] as { revision?: number } | undefined;
+        scheduleValidate(get);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          const detail = error.details[0] as { revision?: number } | undefined;
+          set({
+            saveState: 'conflict',
+            conflict: { revision: detail?.revision ?? 0 },
+          });
+          return;
+        }
         set({
-          saveState: 'conflict',
-          conflict: { revision: detail?.revision ?? 0 },
+          saveState: 'error',
+          error: error instanceof Error ? error.message : '保存失败',
         });
-        return;
       }
-      set({
-        saveState: 'error',
-        error: error instanceof Error ? error.message : '保存失败',
-      });
+    })();
+    inFlight = current;
+    try {
+      await current;
     } finally {
-      saving = false;
+      if (inFlight === current) inFlight = null;
+    }
+  },
+
+  async flushSave() {
+    for (;;) {
+      if (inFlight) {
+        await inFlight;
+        continue;
+      }
+      const { project, spec, saveState, conflict } = get();
+      if (!project || !spec) return false;
+      if (conflict || saveState === 'conflict' || saveState === 'error') {
+        return false;
+      }
+      if (saveState === 'dirty' || spec !== savedSpec) {
+        await get().saveNow();
+        continue;
+      }
+      return true;
     }
   },
 
@@ -202,38 +233,44 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   async overwrite() {
     const { project, spec, conflict } = get();
-    if (!project || !spec || !conflict || saving) return;
+    if (!project || !spec || !conflict || inFlight) return;
     if (saveTimer) clearTimeout(saveTimer);
-    saving = true;
     set({ saveState: 'saving', conflict: null });
+    const current = (async () => {
+      try {
+        const result = await api.putSpec(project.key, spec, conflict.revision);
+        if (get().spec !== spec) {
+          set({
+            revision: result.revision,
+            saveState: 'dirty',
+            error: '',
+          });
+          scheduleSave(get);
+          return;
+        }
+        savedSpec = spec;
+        set({ revision: result.revision, saveState: 'saved', error: '' });
+        scheduleValidate(get);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          const detail = error.details[0] as { revision?: number } | undefined;
+          set({
+            saveState: 'conflict',
+            conflict: { revision: detail?.revision ?? 0 },
+          });
+          return;
+        }
+        set({
+          saveState: 'error',
+          error: error instanceof Error ? error.message : '保存失败',
+        });
+      }
+    })();
+    inFlight = current;
     try {
-      const result = await api.putSpec(project.key, spec, conflict.revision);
-      if (get().spec !== spec) {
-        set({
-          revision: result.revision,
-          saveState: 'dirty',
-          error: '',
-        });
-        scheduleSave(get);
-        return;
-      }
-      set({ revision: result.revision, saveState: 'saved', error: '' });
-      scheduleValidate(get);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        const detail = error.details[0] as { revision?: number } | undefined;
-        set({
-          saveState: 'conflict',
-          conflict: { revision: detail?.revision ?? 0 },
-        });
-        return;
-      }
-      set({
-        saveState: 'error',
-        error: error instanceof Error ? error.message : '保存失败',
-      });
+      await current;
     } finally {
-      saving = false;
+      if (inFlight === current) inFlight = null;
     }
   },
 

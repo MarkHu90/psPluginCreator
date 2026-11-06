@@ -8,6 +8,7 @@ export function BuildPage() {
   const issues = useProjectStore((store) => store.issues);
   const generate = useProjectStore((store) => store.generate);
   const validateNow = useProjectStore((store) => store.validateNow);
+  const flushSave = useProjectStore((store) => store.flushSave);
   const [result, setResult] = useState<GenerateResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -24,6 +25,11 @@ export function BuildPage() {
     setLoading(true);
     setError('');
     try {
+      const ok = await flushSave();
+      if (!ok) {
+        setError('保存失败或存在冲突，无法生成。');
+        return;
+      }
       await validateNow();
       const current = useProjectStore.getState().issues;
       if (current.some((issue) => issue.severity === 'error')) {

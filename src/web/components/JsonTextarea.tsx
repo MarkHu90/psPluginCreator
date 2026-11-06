@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export function JsonTextarea({
   label,
@@ -13,6 +13,14 @@ export function JsonTextarea({
     value === undefined ? '' : JSON.stringify(value, null, 2),
   );
   const [error, setError] = useState('');
+  const lastEmitted = useRef<unknown>(value);
+
+  useEffect(() => {
+    if (value !== lastEmitted.current) {
+      lastEmitted.current = value;
+      setText(value === undefined ? '' : JSON.stringify(value, null, 2));
+    }
+  }, [value]);
 
   return (
     <label className="field">
@@ -25,12 +33,15 @@ export function JsonTextarea({
           const next = event.target.value;
           setText(next);
           if (!next.trim()) {
+            lastEmitted.current = undefined;
             setError('');
             onChange(undefined);
             return;
           }
           try {
-            onChange(JSON.parse(next));
+            const parsed = JSON.parse(next) as unknown;
+            lastEmitted.current = parsed;
+            onChange(parsed);
             setError('');
           } catch (cause) {
             setError(cause instanceof Error ? cause.message : 'JSON 无效');

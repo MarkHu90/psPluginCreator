@@ -58,9 +58,9 @@ export function FilesPage() {
     const rawPage = spec.pages.find(
       (page) => page.kind === 'raw' && page.path === path,
     );
+    const warning = rawPage ? `页面 ${rawPage.id} 引用了该文件。` : '';
     if (
-      rawPage &&
-      !window.confirm(`页面 ${rawPage.id} 引用了该文件，仍要删除？`)
+      !window.confirm(`${warning}确定删除文件 ${path}？此操作不可撤销。`)
     ) {
       return;
     }

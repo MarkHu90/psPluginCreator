@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fastifyStatic from '@fastify/static';
 import multipart from '@fastify/multipart';
@@ -15,6 +16,7 @@ export interface ServerOptions {
   store?: WorkspaceStore;
   actor?: (request: unknown) => Actor;
   maxFileBytes?: number;
+  webRoot?: string;
 }
 
 export function buildServer(options: ServerOptions = {}): FastifyInstance {
@@ -53,10 +55,24 @@ export function buildServer(options: ServerOptions = {}): FastifyInstance {
   registerProjectRoutes(app, { store, actor, maxFileBytes });
 
   const here = dirname(fileURLToPath(import.meta.url));
-  const webRoot = resolve(here, '../../dist/web');
+  const webRoot = options.webRoot ?? resolve(here, '../../dist/web');
   if (existsSync(webRoot)) {
     app.register(fastifyStatic, { root: webRoot, wildcard: false });
   }
+
+  app.setNotFoundHandler(async (request, reply) => {
+    if (request.method === 'GET' && !request.url.startsWith('/api')) {
+      try {
+        const html = await readFile(join(webRoot, 'index.html'), 'utf8');
+        return reply.type('text/html').send(html);
+      } catch {
+        // No built web app: fall through to the JSON 404.
+      }
+    }
+    return reply.code(404).send({
+      error: { code: 'NOT_FOUND', message: 'Not found.' },
+    });
+  });
 
   return app;
 }

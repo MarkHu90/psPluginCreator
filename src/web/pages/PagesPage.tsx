@@ -128,6 +128,13 @@ export function PagesPage() {
               <button
                 type="button"
                 onClick={() => {
+                  if (
+                    !window.confirm(
+                      `确定删除页面 ${page.id}？此操作不可撤销。`,
+                    )
+                  ) {
+                    return;
+                  }
                   setPages(pages.filter((_, i) => i !== index));
                   setSelected(0);
                 }}

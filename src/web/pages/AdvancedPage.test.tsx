@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultSpec } from '../../core/index';
 import { useProjectStore } from '../store/projectStore';
@@ -44,5 +44,29 @@ describe('AdvancedPage', () => {
     fireEvent.change(textarea, { target: { value: '{ bad' } });
     expect(useProjectStore.getState().spec!.plugin.description).toBe('');
     expect(screen.getByText(/JSON 无效|Unexpected/)).toBeTruthy();
+  });
+
+  it('rejects non-object JSON without saving', () => {
+    render(<AdvancedPage />);
+    const textarea = screen.getByLabelText('Spec JSON');
+    const before = useProjectStore.getState().spec;
+
+    for (const value of ['null', '[]']) {
+      fireEvent.change(textarea, { target: { value } });
+      expect(useProjectStore.getState().spec).toBe(before);
+      expect(screen.getByText('JSON 必须是对象。')).toBeTruthy();
+    }
+  });
+
+  it('resyncs the textarea after the store spec is reloaded', async () => {
+    render(<AdvancedPage />);
+    const textarea = screen.getByLabelText('Spec JSON') as HTMLTextAreaElement;
+    const reloaded = createDefaultSpec({ key: 'demo', name: 'Reloaded' });
+
+    await act(async () => {
+      useProjectStore.setState({ spec: reloaded });
+    });
+
+    expect(textarea.value).toBe(JSON.stringify(reloaded, null, 2));
   });
 });

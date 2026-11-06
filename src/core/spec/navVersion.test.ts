@@ -65,12 +65,16 @@ describe('flattenNavigation', () => {
         filename: 'demo.json',
         contextType: 'main',
         entries: [
-          base,
           {
-            htmlID: 'child',
-            title: { en: 'Child' },
-            sortOrder: 1,
-            version: '1.0.0',
+            ...base,
+            children: [
+              {
+                htmlID: 'child',
+                title: { en: 'Child' },
+                sortOrder: 1,
+                version: '1.0.0',
+              },
+            ],
           },
         ],
       },

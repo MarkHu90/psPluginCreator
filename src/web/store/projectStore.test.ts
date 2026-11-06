@@ -100,6 +100,43 @@ describe('projectStore conflict recovery', () => {
     );
   });
 
+  it('flushes a pending edit immediately', async () => {
+    const spec = createDefaultSpec({ key: 'demo', name: 'Demo' });
+    useProjectStore.setState({
+      project,
+      spec,
+      revision: 1,
+      conflict: null,
+      saveState: 'idle',
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        revision: 2,
+        updatedAt: '2026-11-06T05:01:00.000Z',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    useProjectStore.getState().update('plugin.name', 'Flushed Edit');
+    expect(useProjectStore.getState().saveState).toBe('dirty');
+
+    const result = await useProjectStore.getState().flushSave();
+
+    expect(result).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string) as {
+      spec: { plugin: { name: string } };
+      revision: number;
+    };
+    expect(body.spec.plugin.name).toBe('Flushed Edit');
+    expect(body.revision).toBe(1);
+    expect(useProjectStore.getState().saveState).toBe('saved');
+    expect(useProjectStore.getState().revision).toBe(2);
+  });
+
   it('resaves an edit made while a save is in flight', async () => {
     const spec = createDefaultSpec({ key: 'demo', name: 'Demo' });
     useProjectStore.setState({

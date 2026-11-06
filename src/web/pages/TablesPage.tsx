@@ -89,6 +89,13 @@ export function TablesPage() {
               <button
                 type="button"
                 onClick={() => {
+                  if (
+                    !window.confirm(
+                      `确定删除表 ${table.tableName}？此操作不可撤销。`,
+                    )
+                  ) {
+                    return;
+                  }
                   setTables(tables.filter((_, i) => i !== index));
                   setSelected(0);
                 }}

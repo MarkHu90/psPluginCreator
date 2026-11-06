@@ -1,20 +1,43 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PluginSpec } from '../../core/index';
 import { useProjectStore } from '../store/projectStore';
+
+function formatSpec(spec: PluginSpec): string {
+  return JSON.stringify(spec, null, 2);
+}
 
 export function AdvancedPage() {
   const spec = useProjectStore((store) => store.spec);
   const replaceSpec = useProjectStore((store) => store.replaceSpec);
-  const [text, setText] = useState(() => JSON.stringify(spec, null, 2));
+  const lastApplied = useRef<PluginSpec | null>(null);
+  const [text, setText] = useState(() =>
+    spec ? formatSpec(spec) : '',
+  );
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (spec && spec !== lastApplied.current) {
+      lastApplied.current = spec;
+      setText(formatSpec(spec));
+    }
+  }, [spec]);
 
   if (!spec) return null;
 
   function apply(next: string) {
     setText(next);
     try {
-      const parsed = JSON.parse(next) as PluginSpec;
-      replaceSpec(parsed);
+      const parsed = JSON.parse(next) as unknown;
+      if (
+        parsed === null ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed)
+      ) {
+        setError('JSON 必须是对象。');
+        return;
+      }
+      lastApplied.current = parsed as PluginSpec;
+      replaceSpec(parsed as PluginSpec);
       setError('');
     } catch (cause) {
       setError(`JSON 无效：${cause instanceof Error ? cause.message : ''}`);

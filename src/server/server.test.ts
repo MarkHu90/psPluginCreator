@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildServer } from './index';
 
@@ -59,5 +62,33 @@ describe('workbench server', () => {
     });
 
     expect(response.statusCode).toBe(400);
+  });
+
+  it('serves the SPA index for deep links and JSON 404 for API paths', async () => {
+    const webRoot = await mkdtemp(join(tmpdir(), 'ps-web-'));
+    await writeFile(join(webRoot, 'index.html'), '<!doctype html><title>App</title>');
+    const app = buildServer({ webRoot });
+    try {
+      const deepLink = await app.inject({
+        method: 'GET',
+        url: '/projects/demo/overview',
+      });
+      expect(deepLink.statusCode).toBe(200);
+      expect(deepLink.headers['content-type']).toContain('text/html');
+      expect(deepLink.body).toContain('App');
+
+      const root = await app.inject({ method: 'GET', url: '/' });
+      expect(root.statusCode).toBe(200);
+      expect(root.body).toContain('App');
+
+      const api = await app.inject({ method: 'GET', url: '/api/nope' });
+      expect(api.statusCode).toBe(404);
+      expect(api.json()).toEqual({
+        error: { code: 'NOT_FOUND', message: 'Not found.' },
+      });
+    } finally {
+      await app.close();
+      await rm(webRoot, { recursive: true, force: true });
+    }
   });
 });

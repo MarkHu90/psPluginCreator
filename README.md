@@ -17,13 +17,14 @@ npm run dev       # 服务端 5174 + Vite 5173
 npm test
 npm run typecheck
 npm run build:web
+npm run build:web && npm start   # 生产模式：由 5174 提供 dist/web
 ```
 
-打开 `http://127.0.0.1:5173`。
+开发模式打开 `http://127.0.0.1:5173`；生产模式打开 `http://127.0.0.1:5174`。
 
 ## 已实现
 
-- 工程工作区：`workspaces/local/<key>/`，包含 `plugin.json`、`files/`、`build/`、`state/`。
+- 工程工作区：`workspaces/local/<key>/`，包含元数据 `project.json`、spec `plugin.json`、`files/`、`build/`、`state/`；`build/`、`state/` 在第一次生成时创建。
 - 核心表单：插件信息、表与字段、页面、导航（含 version 自动建议）。
 - raw 文件上传/删除；高级 JSON 编辑整份 spec。
 - 校验、生成、`api.zip` / `dbsetup.zip` / `combined.zip` 下载。
