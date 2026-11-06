@@ -1,4 +1,5 @@
 import { specSchema } from '../spec/schema';
+import type { NavEntrySpec } from '../spec/types';
 import {
   extractQueryFields,
   isExcludedField,
@@ -573,6 +574,7 @@ const NAV_VERSION_RE = /^\d+(?:\.\d+){0,3}$/;
 
 const FINGERPRINT_FIELDS = [
   'title',
+  'pageId',
   'pageURL',
   'sortOrder',
   'parentHTMLID',
@@ -582,6 +584,8 @@ const FINGERPRINT_FIELDS = [
   'isNewTab',
   'isLandingPage',
   'checkParams',
+  'schoolIds',
+  'extra',
 ] as const;
 
 function stableStringify(value: unknown): string {
@@ -594,9 +598,16 @@ function stableStringify(value: unknown): string {
     .join(',')}}`;
 }
 
-export function navigationFingerprint(entry: NavigationEntryLike): string {
+export function navigationFingerprint(
+  entry: NavigationEntryLike | NavEntrySpec,
+): string {
   const picked: Record<string, unknown> = {};
   for (const field of FINGERPRINT_FIELDS) picked[field] = entry[field];
+  if (Array.isArray(picked.schoolIds)) {
+    picked.schoolIds = [...picked.schoolIds].sort(
+      (a, b) => Number(a) - Number(b),
+    );
+  }
   return stableStringify(picked);
 }
 
