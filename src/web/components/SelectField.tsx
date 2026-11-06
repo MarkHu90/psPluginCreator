@@ -3,11 +3,13 @@ export function SelectField<T extends string>({
   value,
   options,
   onChange,
+  allowEmpty = false,
 }: {
   label: string;
   value: T | undefined;
   options: Array<{ value: T; label: string }>;
   onChange: (value: T) => void;
+  allowEmpty?: boolean;
 }) {
   return (
     <label className="field">
@@ -17,7 +19,7 @@ export function SelectField<T extends string>({
         value={value ?? ''}
         onChange={(event) => onChange(event.target.value as T)}
       >
-        <option value="">—</option>
+        {allowEmpty ? <option value="">—</option> : null}
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}

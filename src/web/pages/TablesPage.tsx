@@ -103,13 +103,18 @@ export function TablesPage() {
             <TextField label="注释" value={table.comment} onChange={(value) => patchTable({ comment: value })} />
             <SelectField
               label="类型"
-              value={table.type ?? 'standalone'}
+              value={table.type}
               options={[
                 { value: 'standalone', label: 'standalone' },
                 { value: 'oneToOne', label: 'oneToOne' },
                 { value: 'oneToMany', label: 'oneToMany' },
               ]}
-              onChange={(value) => patchTable({ type: value })}
+              allowEmpty
+              onChange={(value) =>
+                patchTable({
+                  type: value ? (value as TableSpec['type']) : undefined,
+                })
+              }
             />
             <TextField label="主键" value={table.primaryKey} onChange={(value) => patchTable({ primaryKey: value })} />
 

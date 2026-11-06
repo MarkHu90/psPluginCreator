@@ -7,7 +7,7 @@ export function SectionIssues({ issues }: { issues: ValidationIssue[] }) {
     <ul className="section-issues">
       {visible.map((issue, index) => (
         <li key={`${issue.code}-${index}`}>
-          <strong>{issue.code}</strong> {issue.message}
+          <code>{issue.code}</code> {issue.message}
         </li>
       ))}
     </ul>

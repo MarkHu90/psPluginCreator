@@ -45,6 +45,23 @@ describe('TablesPage', () => {
     spec = useProjectStore.getState().spec!;
     expect(spec.tables[0].fields).toHaveLength(1);
     expect(spec.tables[0].fields[0].name).toBe('new_field');
+
+    expect(
+      screen.getByLabelText('字段类型').querySelector('option[value=""]'),
+    ).toBeNull();
+    expect(
+      screen.getByLabelText('类型').querySelector('option[value=""]'),
+    ).not.toBeNull();
+  });
+
+  it('stores undefined when the blank table type is selected', () => {
+    render(<TablesPage />);
+    fireEvent.click(screen.getByText('添加表'));
+    fireEvent.change(screen.getByLabelText('类型'), {
+      target: { value: '' },
+    });
+    const spec = useProjectStore.getState().spec!;
+    expect(spec.tables[0].type).toBeUndefined();
   });
 
   it('edits the table name through the form', () => {

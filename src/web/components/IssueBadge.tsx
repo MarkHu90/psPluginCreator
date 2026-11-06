@@ -10,7 +10,10 @@ export function IssueBadge({
   id: string;
 }) {
   const count = issues.filter(
-    (issue) => issue.target?.type === type && issue.target?.id === id,
+    (issue) =>
+      issue.severity === 'error' &&
+      issue.target?.type === type &&
+      issue.target?.id === id,
   ).length;
   if (!count) return null;
   return (
