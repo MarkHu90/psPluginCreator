@@ -48,6 +48,17 @@ describe('project CRUD', () => {
     expect(second.key).toBe('demo-plugin-2');
   });
 
+  it('allocates unique keys for concurrent auto-key creates', async () => {
+    const [first, second] = await Promise.all([
+      store.create('local', { name: 'Demo Plugin' }),
+      store.create('local', { name: 'Demo Plugin' }),
+    ]);
+    expect([first.key, second.key].sort()).toEqual([
+      'demo-plugin',
+      'demo-plugin-2',
+    ]);
+  });
+
   it('rejects an explicit duplicate key', async () => {
     await store.create('local', { key: 'demo', name: 'Demo' });
     await expect(

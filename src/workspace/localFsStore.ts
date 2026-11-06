@@ -123,49 +123,57 @@ export class LocalFsWorkspaceStore {
       throw new WorkspaceError('BAD_REQUEST', 'Project name is required.');
     }
 
-    let key: string;
-    if (input.key !== undefined) {
-      assertValidKey(input.key);
+    return this.withLock(`tenant:${tenant}`, async () => {
+      let key: string;
+      if (input.key !== undefined) {
+        assertValidKey(input.key);
+        try {
+          await readFile(join(this.tenantDir(tenant), input.key, 'project.json'));
+          throw new WorkspaceError('KEY_EXISTS', `Project already exists: ${input.key}`);
+        } catch (error) {
+          if (error instanceof WorkspaceError) throw error;
+        }
+        key = input.key;
+      } else {
+        key = await this.uniqueKey(tenant, slugifyKey(input.name));
+      }
+
+      const dir = this.projectDir({ tenant, key });
+      await mkdir(this.tenantDir(tenant), { recursive: true });
       try {
-        await readFile(join(this.tenantDir(tenant), input.key, 'project.json'));
-        throw new WorkspaceError('KEY_EXISTS', `Project already exists: ${input.key}`);
+        await mkdir(dir);
       } catch (error) {
-        if (error instanceof WorkspaceError) throw error;
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+          throw new WorkspaceError('KEY_EXISTS', `Project already exists: ${key}`);
+        }
+        throw error;
       }
-      key = input.key;
-    } else {
-      key = await this.uniqueKey(tenant, slugifyKey(input.name));
-    }
 
-    const dir = this.projectDir({ tenant, key });
-    await mkdir(this.tenantDir(tenant), { recursive: true });
-    try {
-      await mkdir(dir);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-        throw new WorkspaceError('KEY_EXISTS', `Project already exists: ${key}`);
-      }
-      throw error;
-    }
+      const now = new Date().toISOString();
+      const project: Project = {
+        key,
+        tenant,
+        createdAt: now,
+        updatedAt: now,
+        revision: 1,
+      };
+      const spec = createDefaultSpec({
+        key,
+        name: input.name,
+        publisher: input.publisher,
+      });
 
-    const now = new Date().toISOString();
-    const project: Project = {
-      key,
-      tenant,
-      createdAt: now,
-      updatedAt: now,
-      revision: 1,
-    };
-    const spec = createDefaultSpec({
-      key,
-      name: input.name,
-      publisher: input.publisher,
+      await writeAtomic(
+        join(dir, 'plugin.json'),
+        `${JSON.stringify(spec, null, 2)}\n`,
+      );
+      await mkdir(join(dir, 'files'), { recursive: true });
+      await writeAtomic(
+        join(dir, 'project.json'),
+        `${JSON.stringify(project, null, 2)}\n`,
+      );
+      return project;
     });
-
-    await writeAtomic(join(dir, 'plugin.json'), `${JSON.stringify(spec, null, 2)}\n`);
-    await mkdir(join(dir, 'files'), { recursive: true });
-    await writeAtomic(join(dir, 'project.json'), `${JSON.stringify(project, null, 2)}\n`);
-    return project;
   }
 
   async get(ref: ProjectRef): Promise<Project> {
