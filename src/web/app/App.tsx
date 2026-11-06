@@ -1,4 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { AdvancedPage } from '../pages/AdvancedPage';
+import { BuildPage } from '../pages/BuildPage';
+import { FilesPage } from '../pages/FilesPage';
 import { NavigationPage } from '../pages/NavigationPage';
 import { OverviewPage } from '../pages/OverviewPage';
 import { PagesPage } from '../pages/PagesPage';
@@ -16,6 +19,9 @@ export function App() {
         <Route path="tables" element={<TablesPage />} />
         <Route path="pages" element={<PagesPage />} />
         <Route path="navigation" element={<NavigationPage />} />
+        <Route path="files" element={<FilesPage />} />
+        <Route path="advanced" element={<AdvancedPage />} />
+        <Route path="build" element={<BuildPage />} />
       </Route>
     </Routes>
   );
