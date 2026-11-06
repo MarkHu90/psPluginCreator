@@ -1,0 +1,10 @@
+.codegraph
+.superpowers
+.DS_Store
+demo/
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+build/
