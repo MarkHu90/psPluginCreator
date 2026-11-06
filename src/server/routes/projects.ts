@@ -1,8 +1,21 @@
+import { access } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { join } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { validateSpec } from '../../core/index';
+import {
+  buildZip,
+  flattenNavigation,
+  generatePlan,
+  validateOutput,
+  validateSpec,
+  type PluginSpec,
+  type ValidationIssue,
+  type ZipArtifact,
+} from '../../core/index';
 import { WorkspaceError } from '../../workspace/errors';
 import type { ProjectRef, WorkspaceStore } from '../../workspace/types';
 import type { Actor } from '../actor';
+import { writeBuildAtomically } from '../build';
 
 export interface ProjectRouteDeps {
   store: WorkspaceStore;
@@ -157,6 +170,176 @@ export function registerProjectRoutes(
         ];
         return { issues, errors: 1, warnings: 0 };
       }
+      return sendWorkspaceError(reply, error);
+    }
+  });
+
+  app.post('/api/projects/:key/generate', async (request, reply) => {
+    const ref = refOf(request, (request.params as { key: string }).key);
+    const body = request.body as { zip?: unknown } | undefined;
+    const withZip = body?.zip !== false;
+
+    try {
+      const { spec: rawSpec } = await deps.store.readSpec(ref);
+      const specIssues = validateSpec(rawSpec);
+      if (specIssues.some((issue) => issue.severity === 'error')) {
+        return reply.code(422).send({
+          error: {
+            code: 'VALIDATION_FAILED',
+            message: 'Spec validation failed.',
+            details: specIssues,
+          },
+        });
+      }
+
+      const spec = rawSpec as PluginSpec;
+      const rawFiles = new Map<string, Uint8Array>();
+      const missing: ValidationIssue[] = [];
+      for (const raw of spec.rawFiles) {
+        try {
+          rawFiles.set(raw.path, await deps.store.readFile(ref, raw.path));
+        } catch {
+          missing.push({
+            severity: 'error',
+            code: 'RAW_FILE_MISSING',
+            message: `Raw file is missing: ${raw.path}`,
+            path: raw.path,
+          });
+        }
+      }
+      if (missing.length) {
+        return reply.code(422).send({
+          error: {
+            code: 'VALIDATION_FAILED',
+            message: 'Raw files are missing.',
+            details: missing,
+          },
+        });
+      }
+
+      const files = generatePlan(spec, { rawFiles });
+      const zips = withZip
+        ? {
+            api: buildZip(files, 'api'),
+            dbsetup: buildZip(files, 'dbsetup'),
+            combined: buildZip(files, 'combined'),
+          }
+        : undefined;
+      const outputIssues = validateOutput(files, { zip: zips?.combined });
+      const issues = [...specIssues, ...outputIssues];
+      if (issues.some((issue) => issue.severity === 'error')) {
+        return reply.code(422).send({
+          error: {
+            code: 'VALIDATION_FAILED',
+            message: 'Output validation failed.',
+            details: issues,
+          },
+        });
+      }
+
+      await writeBuildAtomically(deps.store.buildDir(ref), files, zips);
+      const navBaseline = flattenNavigation(spec.navigation);
+      await deps.store.writeNavBaseline(ref, navBaseline);
+
+      return {
+        files: files.map((file) => file.path),
+        artifacts: { api: withZip, dbsetup: withZip, combined: withZip },
+        warnings: issues.filter((issue) => issue.severity === 'warning'),
+        navBaseline,
+      };
+    } catch (error) {
+      return sendWorkspaceError(reply, error);
+    }
+  });
+
+  app.get('/api/projects/:key/download/:artifact', async (request, reply) => {
+    const ref = refOf(request, (request.params as { key: string }).key);
+    const artifact = (request.params as { artifact: string })
+      .artifact as ZipArtifact;
+    if (!['api', 'dbsetup', 'combined'].includes(artifact)) {
+      return reply.code(404).send({
+        error: { code: 'NOT_FOUND', message: 'Unknown artifact.' },
+      });
+    }
+    try {
+      await deps.store.get(ref);
+    } catch (error) {
+      return sendWorkspaceError(reply, error);
+    }
+    const target = join(deps.store.buildDir(ref), `${artifact}.zip`);
+    try {
+      await access(target);
+    } catch {
+      return reply.code(409).send({
+        error: { code: 'BUILD_MISSING', message: 'Run generate first.' },
+      });
+    }
+    reply.header(
+      'Content-Disposition',
+      `attachment; filename="${ref.key}-${artifact}.zip"`,
+    );
+    reply.type('application/zip');
+    return reply.send(createReadStream(target));
+  });
+
+  app.get('/api/projects/:key/files', async (request, reply) => {
+    const ref = refOf(request, (request.params as { key: string }).key);
+    try {
+      return { files: await deps.store.listFiles(ref) };
+    } catch (error) {
+      return sendWorkspaceError(reply, error);
+    }
+  });
+
+  app.put('/api/projects/:key/files', async (request, reply) => {
+    const ref = refOf(request, (request.params as { key: string }).key);
+    const path = (request.query as { path?: string }).path;
+    if (!path) {
+      return reply.code(400).send({
+        error: { code: 'BAD_REQUEST', message: 'path query is required.' },
+      });
+    }
+    try {
+      const upload = await request.file();
+      if (!upload) {
+        return reply.code(400).send({
+          error: { code: 'BAD_REQUEST', message: 'file is required.' },
+        });
+      }
+      const bytes = await upload.toBuffer();
+      await deps.store.writeFile(ref, path, bytes);
+      const files = await deps.store.listFiles(ref);
+      const file = files.find((entry) => entry.path === path) ?? {
+        path,
+        size: bytes.length,
+        updatedAt: new Date().toISOString(),
+      };
+      return reply.code(201).send({ file });
+    } catch (error) {
+      if ((error as { code?: string }).code === 'FST_REQ_FILE_TOO_LARGE') {
+        return reply.code(413).send({
+          error: {
+            code: 'FILE_TOO_LARGE',
+            message: `File exceeds ${deps.maxFileBytes} bytes.`,
+          },
+        });
+      }
+      return sendWorkspaceError(reply, error);
+    }
+  });
+
+  app.delete('/api/projects/:key/files', async (request, reply) => {
+    const ref = refOf(request, (request.params as { key: string }).key);
+    const path = (request.query as { path?: string }).path;
+    if (!path) {
+      return reply.code(400).send({
+        error: { code: 'BAD_REQUEST', message: 'path query is required.' },
+      });
+    }
+    try {
+      await deps.store.deleteFile(ref, path);
+      return reply.code(204).send();
+    } catch (error) {
       return sendWorkspaceError(reply, error);
     }
   });
