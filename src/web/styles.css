@@ -361,3 +361,11 @@ textarea {
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .muted { color: #5a6b82; }
 .error-text { color: #b3261e; }
+.split { display: grid; grid-template-columns: 240px 1fr; gap: 20px; }
+.list-pane ul { list-style: none; padding: 0; display: grid; gap: 4px; }
+.list-pane li button { width: 100%; text-align: left; padding: 8px; border: 1px solid #d9dee5; border-radius: 6px; background: #fff; }
+.list-pane li button.active { background: #e3edf9; font-weight: 600; }
+.section-header { display: flex; justify-content: space-between; align-items: center; }
+.issue-badge { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #b3261e; color: #fff; font-size: 11px; font-weight: 700; }
+.section-issues { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid #b3261e; background: #fdf3f2; border-radius: 4px; list-style: none; }
+.section-issues code { font-family: ui-monospace, monospace; font-size: 12px; }

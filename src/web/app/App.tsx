@@ -1,5 +1,7 @@
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { OverviewPage } from '../pages/OverviewPage';
 import { ProjectListPage } from '../pages/ProjectListPage';
+import { TablesPage } from '../pages/TablesPage';
 import { ProjectLayout } from './ProjectLayout';
 
 export function App() {
@@ -7,10 +9,9 @@ export function App() {
     <Routes>
       <Route path="/" element={<ProjectListPage />} />
       <Route path="/projects/:key" element={<ProjectLayout />}>
-        <Route
-          index
-          element={<p className="muted">从左侧选择一个配置页。</p>}
-        />
+        <Route index element={<Navigate to="overview" replace />} />
+        <Route path="overview" element={<OverviewPage />} />
+        <Route path="tables" element={<TablesPage />} />
       </Route>
     </Routes>
   );
