@@ -237,6 +237,7 @@ export interface WorkspaceStore {
   ): Promise<{ revision: number; updatedAt: string }>;
 
   listFiles(ref: ProjectRef): Promise<RawFileInfo[]>;
+  readFile(ref: ProjectRef, path: string): Promise<Uint8Array>;
   writeFile(ref: ProjectRef, path: string, bytes: Uint8Array): Promise<void>;
   deleteFile(ref: ProjectRef, path: string): Promise<void>;
 
@@ -385,7 +386,7 @@ buildServer(options?: {
 **生成**
 
 1. 读取 spec 并校验；有 error 返回 422 `VALIDATION_FAILED`，`details` 为 issues；不写 `build/`。
-2. 调用现有 `generatePlan(spec, { rawFiles })`：raw 内容从 `files/` 读取；引用缺失时报 `RAW_PAGE_MISSING_FILE` 或读取错误，生成中止。
+2. 调用现有 `generatePlan(spec, { rawFiles })`：raw 内容通过 `store.readFile` 从 `files/` 读取；引用缺失时返回 422，issue code 为 `RAW_FILE_MISSING`。
 3. `validateOutput(files)`；有 error 同样 422。
 4. 原子写 `build/`；`zip !== false` 时生成三个 zip。
 5. 写 `state/nav-baseline.json`（扁平导航条目）。
